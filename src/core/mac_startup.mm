@@ -51,6 +51,8 @@
 #include <QDir>
 #include <QEvent>
 #include <QFile>
+#include <QMetaObject>
+#include <QThread>
 
 #include "includes/mac_delegate.h"
 #include "includes/scoped_cftyperef.h"
@@ -202,8 +204,22 @@ QDebug operator<<(QDebug dbg, NSObject *object) {
 }
 
 - (NSApplicationTerminateReply) applicationShouldTerminate:(NSApplication*) sender {
+
   Q_UNUSED(sender);
-  return NSTerminateNow;
+
+  // Without a running event loop, for example before the event loop has started or after it has exited, there is nothing to shut down through it.
+  if (!application_handler_ || QThread::currentThread()->loopLevel() == 0) {
+    return NSTerminateNow;
+  }
+
+  // Terminating now makes AppKit call exit() while the subsystems are still running, so the last playlist changes and the deferred tag writes are lost.
+  // Instead shut down like the quit action does, which quits the event loop when done, so the application exits through main(), like with Qt's own application delegate.
+  // This is used when quitting from the Dock, and when logging out or shutting down.
+  PlatformInterface *application_handler = application_handler_;
+  QMetaObject::invokeMethod(qApp, [application_handler]() { application_handler->Exit(); }, Qt::QueuedConnection);
+
+  return NSTerminateCancel;
+
 }
 
 - (void) userNotificationCenter: (UNUserNotificationCenter*)center
